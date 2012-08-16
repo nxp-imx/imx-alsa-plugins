@@ -137,6 +137,7 @@ static int asrc_start_conversion(asrc_pair *pair)
     if (err < 0)
         fprintf(stderr, "Unable to start ASRC converting %d\n", pair->index);
 
+    pair->is_converting = 1;
     return err;
 }
 
@@ -151,6 +152,7 @@ static int asrc_stop_conversion(asrc_pair *pair)
     if (err < 0)
         fprintf(stderr, "Unable to stop ASRC converting %d\n", pair->index);
 
+    pair->is_converting = 0;
     return err;
 }
 
