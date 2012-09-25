@@ -31,9 +31,9 @@
 #include "asrc_pair.h"
 
 #define ASRC_DEVICE     "/dev/mxc_asrc"
-#define DMA_MAX_BYTES   (65536)
-#define DMA_MAX_FRAMES  (DMA_MAX_BYTES/2)
+#define DMA_MAX_BYTES   (32768)
 #define BUF_NUM         (2)
+#define ASRC_PADDING_MS	(1)    /* padding in ms for both head and tail */
 
 static void unmap_buffers(asrc_map_area *inp, asrc_map_area *outp, int num)
 {
@@ -165,6 +165,8 @@ asrc_pair *asrc_pair_create(unsigned int channels, ssize_t in_period_frames,
     struct asrc_config config;
     asrc_pair *pair = NULL;
     asrc_map_area *in_map, *out_map;
+    uint32_t padding_frames = in_rate * ASRC_PADDING_MS / 1000;
+    uint32_t dma_buffer_size = (in_period_frames + padding_frames * 2) << 1;
 
     fd = open(ASRC_DEVICE, O_RDWR);
     if (fd < 0)
@@ -182,7 +184,7 @@ asrc_pair *asrc_pair_create(unsigned int channels, ssize_t in_period_frames,
 
     config.pair = req.index;
     config.channel_num = req.chn_num;
-    config.dma_buffer_size = in_period_frames > DMA_MAX_FRAMES ? DMA_MAX_BYTES : (in_period_frames<<1);
+    config.dma_buffer_size = dma_buffer_size > DMA_MAX_BYTES ? DMA_MAX_BYTES : dma_buffer_size;
     config.input_sample_rate = in_rate;
     config.output_sample_rate = out_rate;
     config.buffer_num = BUF_NUM;
@@ -270,10 +272,15 @@ int asrc_pair_set_rate(asrc_pair *pair, ssize_t in_period_frames,
 {
     struct asrc_config config;
     int err;
+    uint32_t padding_frames;
+    uint32_t dma_buffer_size;
 
     if (in_rate == pair->in_rate && out_rate == pair->out_rate &&
             in_period_frames == pair->in_period_frames && out_period_frames == pair->out_period_frames)
         return 0;
+
+    padding_frames = in_rate * ASRC_PADDING_MS / 1000;
+    dma_buffer_size =  (in_period_frames + padding_frames * 2) << 1;
 
     unmap_buffers(pair->in_map, pair->out_map, pair->buf_num);
     memset(pair->in_map, 0, pair->buf_num * sizeof(asrc_map_area));
@@ -281,7 +288,7 @@ int asrc_pair_set_rate(asrc_pair *pair, ssize_t in_period_frames,
 
     config.pair = pair->index;
     config.channel_num = pair->channels;
-    config.dma_buffer_size = in_period_frames > DMA_MAX_FRAMES ? DMA_MAX_BYTES : (in_period_frames<<1);
+    config.dma_buffer_size = dma_buffer_size > DMA_MAX_BYTES ? DMA_MAX_BYTES : dma_buffer_size;
     config.input_sample_rate = in_rate;
     config.output_sample_rate = out_rate;
     config.buffer_num = pair->buf_num;
@@ -317,11 +324,67 @@ void asrc_pair_reset(asrc_pair *pair)
         fprintf(stderr, "Unable to flush ASRC %d\n", pair->index);
 }
 
-static void queue_and_wait_result(asrc_pair *pair, const int16_t *src, uint32_t src_frames,
-        uint32_t padding_frames, int16_t *dst, unsigned int dst_frames)
+static void asrc_pair_pad(int16_t *dst, int16_t pad_value, uint32_t frames)
 {
-    uint32_t in_frames_left = src_frames;
-    uint32_t out_frames_left = dst_frames + padding_frames;
+    while (frames > 0)
+    {
+        *dst++ = pad_value;
+        frames--;
+    }
+}
+
+static void fill_input_data(asrc_pair *pair, uint32_t *in_frames_left, const int16_t **src,
+        uint32_t *src_frames, uint32_t padding_frames, int16_t *dst)
+{
+    uint32_t buf_frames = pair->buf_size >> 1;
+    uint32_t padded_frames, copy_frames, space_left;
+    const int16_t *s = *src;
+    int16_t *d = dst;
+    int16_t pad_head = s[0];
+    int16_t pad_tail = s[*src_frames - 1];
+
+    space_left = buf_frames;
+    if (*in_frames_left > *src_frames + padding_frames) /* pad head */
+    {
+        padded_frames = *in_frames_left - *src_frames - padding_frames;
+        padded_frames = padded_frames > space_left ? space_left : padded_frames;
+        asrc_pair_pad(d, pad_head, padded_frames);
+        d += padded_frames;
+        *in_frames_left -= padded_frames;
+        space_left -= padded_frames;
+    }
+
+    if (space_left == 0)
+        return;
+
+    if (*in_frames_left <= *src_frames + padding_frames && *in_frames_left > padding_frames) /* fill data */
+    {
+        copy_frames = *in_frames_left - padding_frames;
+        copy_frames = copy_frames > space_left ? space_left : copy_frames;
+        memcpy(d, s, copy_frames << 1);
+        *src += copy_frames;
+        d += copy_frames;
+        *in_frames_left -= copy_frames;
+        space_left -= copy_frames;
+        *src_frames -= copy_frames;
+    }
+
+    if (space_left == 0)
+        return;
+
+    if (*in_frames_left <= padding_frames)
+    {
+        padded_frames = *in_frames_left > space_left ? space_left : *in_frames_left;
+        asrc_pair_pad(d, pad_tail, padded_frames);
+        *in_frames_left -= padded_frames;
+    }
+}
+
+static void queue_and_wait_result(asrc_pair *pair, const int16_t *src, uint32_t src_frames,
+        uint32_t src_frames_total, uint32_t in_padding_frames, uint32_t out_padding_frames,
+        int16_t *dst, unsigned int dst_frames)
+{
+    uint32_t out_frames_left = dst_frames + out_padding_frames;
     const int16_t *s = src;
     int16_t *d = dst;
     int err;
@@ -329,6 +392,8 @@ static void queue_and_wait_result(asrc_pair *pair, const int16_t *src, uint32_t 
     uint32_t buf_frames = pair->buf_size >> 1;
     uint32_t offset;
     uint32_t copy_frames;
+    uint32_t in_frames_left = src_frames_total;
+    uint32_t sframes = src_frames;
 
     while(1)
     {
@@ -342,10 +407,7 @@ static void queue_and_wait_result(asrc_pair *pair, const int16_t *src, uint32_t 
         {
             if (in_frames_left > 0)
             {
-                copy_frames = in_frames_left > buf_frames ? buf_frames : in_frames_left;
-                memcpy(pair->in_map[buffer.index].addr, s, copy_frames << 1);
-                s += copy_frames;
-                in_frames_left -= copy_frames;
+                fill_input_data(pair, &in_frames_left, &s, &sframes, in_padding_frames, (int16_t *)pair->in_map[buffer.index].addr);
 
                 if ((err = ioctl(pair->fd, ASRC_Q_INBUF, &buffer)) < 0)
                 {
@@ -369,12 +431,12 @@ static void queue_and_wait_result(asrc_pair *pair, const int16_t *src, uint32_t 
             else
             {
                 offset = out_frames_left - dst_frames;
-                copy_frames = buf_frames - offset;
+                copy_frames = buf_frames > out_frames_left ? out_frames_left - offset : buf_frames - offset;
             }
 
             if (copy_frames > 0)
             {
-                memcpy(d, pair->out_map[buffer.index].addr + offset, copy_frames << 1);
+                memcpy(d, (char*)pair->out_map[buffer.index].addr + (offset << 1), copy_frames << 1);
                 d += copy_frames;
             }
 
@@ -396,34 +458,26 @@ void asrc_pair_convert_s16(asrc_pair *pair, const int16_t *src, unsigned int src
         int16_t *dst, unsigned int dst_frames)
 {
     uint32_t buf_frames = pair->buf_size >> 1;
-    int buf_num_needed = (src_frames + (buf_frames - 1)) / buf_frames;
+    uint32_t min_padding_frames = pair->in_rate * ASRC_PADDING_MS / 1000;
+    int buf_num_needed = (src_frames + min_padding_frames * 2 + (buf_frames - 1)) / buf_frames;
     uint32_t padding_frames = (buf_frames * buf_num_needed - src_frames) / 2; /* half at head and half at tail */
     int buf_num_prefill = buf_num_needed > pair->buf_num ? pair->buf_num : buf_num_needed;
     int i, err;
     const int16_t *s;
+    uint32_t sframes;
     int16_t *d;
-    uint32_t in_frames_left = src_frames;
-    uint32_t copy_frames;
+    uint32_t in_frames_left = src_frames + padding_frames * 2; /* we need pad at head and tail */
     struct asrc_buffer inbuf, outbuf;
     uint32_t out_frames, out_padding_frames;
 
-
-    /* copy first buffer with padding */
-    d = (int16_t *)pair->in_map[0].addr;
     s = src;
-    //memset(d, 0, padding_frames << 1);
-    copy_frames = in_frames_left > (buf_frames - padding_frames) ? buf_frames - padding_frames : in_frames_left; 
-    memcpy(d + padding_frames, s, copy_frames << 1);
-    s += copy_frames;
-    in_frames_left -= copy_frames;
+    sframes = src_frames;
 
-    /* prefill left buffer */
-    for (i = 1; i < buf_num_prefill; i++)
+    /* prefill input buffer */
+    for (i = 0; i < buf_num_prefill; i++)
     {
-        copy_frames = in_frames_left > buf_frames ? buf_frames : in_frames_left;
-        memcpy(pair->in_map[i].addr, s, copy_frames << 1);
-        s += copy_frames;
-        in_frames_left -= copy_frames;
+        d = (int16_t *)pair->in_map[i].addr;
+        fill_input_data(pair, &in_frames_left, &s, &sframes, padding_frames, d);
     }
 
     /* queue prefilled buffer */
@@ -451,14 +505,13 @@ void asrc_pair_convert_s16(asrc_pair *pair, const int16_t *src, unsigned int src
 
     asrc_start_conversion(pair);
 
-    out_frames = (src_frames + padding_frames) * pair->den / pair->num;
-    out_padding_frames = (padding_frames) * pair->den / pair->num; 
-    out_frames = out_frames - out_padding_frames;
+    out_frames = src_frames * pair->den / pair->num;
+    out_padding_frames = padding_frames * pair->den / pair->num; 
     out_frames = out_frames < dst_frames ? out_frames : dst_frames;
 
     d = dst + dst_frames - out_frames;
 
-    queue_and_wait_result(pair, s, in_frames_left, out_padding_frames, d, out_frames);
+    queue_and_wait_result(pair, s, sframes, in_frames_left, padding_frames, out_padding_frames, d, out_frames);
 
     asrc_stop_conversion(pair);
     asrc_pair_reset(pair);
