@@ -31,12 +31,6 @@
 extern "C" {
 #endif
 
-typedef struct
-{
-    void *addr;
-    size_t len;
-} asrc_map_area;
-
 typedef struct {
     int fd;
     int type;
@@ -48,8 +42,6 @@ typedef struct {
     unsigned int out_rate;
     uint32_t buf_size;
     int buf_num;
-    asrc_map_area *in_map;
-    asrc_map_area *out_map;
     uint32_t num;
     uint32_t den;
 
