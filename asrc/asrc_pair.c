@@ -254,6 +254,7 @@ void asrc_pair_convert_s16(asrc_pair *pair, const int16_t *src, unsigned int src
     char *s = (void *)src;
     char *d = (void *)dst;
     unsigned int in_len, out_len;
+    int16_t *dups, *dupd;
 
     asrc_start_conversion(pair);
 
@@ -262,7 +263,6 @@ void asrc_pair_convert_s16(asrc_pair *pair, const int16_t *src, unsigned int src
         in_len = src_left > pair->buf_size ? pair->buf_size : src_left;
         out_len = dst_left;
 
-        buf_info.index = 0;
         buf_info.input_buffer_vaddr = s;
         buf_info.input_buffer_length = in_len;
         buf_info.output_buffer_vaddr = d;
@@ -277,5 +277,20 @@ void asrc_pair_convert_s16(asrc_pair *pair, const int16_t *src, unsigned int src
         src_left -= in_len;
         d += buf_info.output_buffer_length;
         dst_left -= buf_info.output_buffer_length;
+    }
+
+    if (dst_left > 0)
+    {
+        /* try copying last frame to left */
+        dupd = (int16_t *)d;
+        dups = dupd - pair->channels;
+        if (dups >= dst) /* we have enough data to copy */
+        {
+            while (dst_left > 0)
+            {
+                *dupd++ = *dups++;
+                dst_left -= 2;
+            }
+        }
     }
 }
