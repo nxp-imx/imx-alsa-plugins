@@ -8,7 +8,8 @@ AM_LDFLAGS = -module -avoid-version -export-dynamic -no-undefined $(LDFLAGS_NOUN
 libasound_module_rate_asrcrate_la_SOURCES = rate_asrcrate.c asrc_pair.c
 libasound_module_rate_asrcrate_la_LIBADD = @ALSA_LIBS@
 
-install-exec-hook:
+install-data-hook:
+	mkdir -p $(DESTDIR)@ALSA_PLUGIN_DIR@
 	rm -f $(DESTDIR)@ALSA_PLUGIN_DIR@/libasound_module_rate_asrcrate_*.so
 	$(LN_S) libasound_module_rate_asrcrate.so $(DESTDIR)@ALSA_PLUGIN_DIR@/libasound_module_rate_asrcrate_fast.so
 
