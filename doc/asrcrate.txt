@@ -1,15 +1,15 @@
-Rate Converter Plugin Using Speex Resampler
-===========================================
+Rate Converter Plugin Using Freescale ASRC Resampler
+====================================================
 
-The plugin in rate subdirectory is an external rate converter using
-the Speex resampler (aka Public Parrot Hack) by Jean-Marc Valin.  You can 
-use this rate converter plugin by defining a rate PCM with "converter" 
+The plugin in asrc subdirectory is an external rate converter using
+the Freescale ASRC hardware resampler. You can use this rate converter
+plugin by defining a rate PCM with "converter" 
 parameter, such as:
 
 	pcm.my_rate {
 		type rate
 		slave.pcm "hw"
-		converter "speexrate"
+		converter "asrcrate"
 	}
 
 The plug plugin has also a similar field, "rate_converter".
@@ -17,13 +17,39 @@ The plug plugin has also a similar field, "rate_converter".
 Or, more easily, define a global variable "defaults.pcm.rate_converter",
 which is used as the default converter type by plug and rate plugins:
 
-	defaults.pcm.rate_converter "speexrate"
+	defaults.pcm.rate_converter "asrcrate"
 
-Write the above in your ~/.asoundrc or /etc/asound.conf.
+Write the above in your ~/.asoundrc or /etc/asound.conf, such as
+
+defaults.pcm.rate_converter "asrcrate"
+
+pcm.dmix_44100 {
+    type dmix
+    ipc_key 5678293
+    ipc_key_add_uid yes
+    slave{
+        pcm "hw:0,0"
+        period_time 10000
+        format S16_LE
+        rate 44100
+    }
+}
+
+pcm.asrc {
+    type plug
+    route_policy "average"
+    slave.pcm "dmix_44100"
+}
 
 The following converter types are available:
 
-  - speexrate_best	Use quality 10 (equivalent to SRC_SINC_BEST_QUALITY)
-  - speexrate_medium	Use quality 5 (equivalent to SRC_SINC_MEDIUM_QUALITY)
-  - speexrate		Use quality 3 (equivalent to SRC_SINC_FASTEST)
+  - asrcrate        Use freescale ASRC hardware
 
+Restrictions:
+
+The ASRC hardware can at most support 3 instances and 10 channels
+simultanously. If you want to make use of asrc plugins, make sure
+you won't create more than 3 asrc plugin instances, and total number
+of converting channels is less than or equal to 10. For example, you
+can run 3 asrc converters with channels 2, 2, 6, while you can't run
+2 asrc converters with channels 6, 6.
