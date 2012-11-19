@@ -32,6 +32,10 @@
 #define ASRC_DEVICE     "/dev/mxc_asrc"
 #define DMA_MAX_BYTES   (32768)
 
+#define LINEAR_RATE         (20)
+#define LINEAR_PITCH_BITS   (16)
+#define LINEAR_PITCH        (1 << LINEAR_PITCH_BITS)
+
 static uint32_t get_max_divider(uint32_t x, uint32_t y)
 {
     uint32_t t;
@@ -244,6 +248,44 @@ void asrc_pair_reset(asrc_pair *pair)
 {
 }
 
+static void linear_pad_s16(asrc_pair *pair, int16_t *samples, int frames)
+{
+    unsigned int ch = pair->channels;
+    unsigned int c;
+    int i;
+
+    int src_frames = frames * LINEAR_RATE;
+    int dst_frames = frames * (LINEAR_RATE + 1);
+    int16_t *src, *s, *d;
+    int32_t pos;
+    int32_t step = LINEAR_PITCH * (src_frames - 1) / (dst_frames - 1);
+
+    src = (int16_t *) malloc((dst_frames << 1) * ch);
+
+    /* first, copy samples to src buffer */
+    memcpy(src, samples, (src_frames << 1) * ch);
+
+    for (c = 0; c < ch; c++)
+    {
+        pos = 0;
+        s = src + c;
+        d = samples + c;
+        for (i = 0; i < dst_frames; i++)
+        {
+            *d = ((LINEAR_PITCH - pos) * (*s) + pos * (*(s + ch))) >> LINEAR_PITCH_BITS;
+            d += ch;
+            pos += step;
+            if (pos >= LINEAR_PITCH)
+            {
+                pos -= LINEAR_PITCH;
+                s += ch;
+            }
+        }
+    }
+
+    free (src);
+}
+
 void asrc_pair_convert_s16(asrc_pair *pair, const int16_t *src, unsigned int src_frames,
         int16_t *dst, unsigned int dst_frames)
 {
@@ -254,7 +296,8 @@ void asrc_pair_convert_s16(asrc_pair *pair, const int16_t *src, unsigned int src
     char *s = (void *)src;
     char *d = (void *)dst;
     unsigned int in_len, out_len;
-    int16_t *dups, *dupd;
+    int frames;
+    int16_t *samples;
 
     asrc_start_conversion(pair);
 
@@ -277,20 +320,18 @@ void asrc_pair_convert_s16(asrc_pair *pair, const int16_t *src, unsigned int src
         src_left -= in_len;
         d += buf_info.output_buffer_length;
         dst_left -= buf_info.output_buffer_length;
+        //printf("[%d/%d]\n", buf_info.output_buffer_length, out_len);
     }
 
     if (dst_left > 0)
     {
-        /* try copying last frame to left */
-        dupd = (int16_t *)d;
-        dups = dupd - pair->channels;
-        if (dups >= dst) /* we have enough data to copy */
+        frames = (dst_left >> 1) / pair->channels;
+        /* we use LINEAR_RATE * N frames to generate (LINEAR_RATE+1)*N frames */
+        samples = (int16_t *)d - frames * LINEAR_RATE * pair->channels;
+        if (frames > 0 && samples >= dst)
         {
-            while (dst_left > 0)
-            {
-                *dupd++ = *dups++;
-                dst_left -= 2;
-            }
+            /* try insert samples by linear alg */
+            linear_pad_s16(pair, samples, frames);
         }
     }
 }
