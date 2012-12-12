@@ -53,3 +53,8 @@ you won't create more than 3 asrc plugin instances, and total number
 of converting channels is less than or equal to 10. For example, you
 can run 3 asrc converters with channels 2, 2, 6, while you can't run
 2 asrc converters with channels 6, 6.
+
+ASRC hardware can only support some fixed sample rates, don't make use it if you don't know which rates are in your cases.
+Input: 8000 16000 22050 32000 44100 48000 64000 88200 96000 176400 192000
+Output: 32000 44100 48000 64000 88200 96000 176400 192000
+
