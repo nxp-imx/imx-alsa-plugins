@@ -139,7 +139,7 @@ asrc_pair *asrc_pair_create(unsigned int channels, ssize_t in_period_frames,
     config.dma_buffer_size = dma_buffer_size;
     config.input_sample_rate = in_rate;
     config.output_sample_rate = out_rate;
-    config.buffer_num = 1;
+    config.buffer_num = buf_num;
     config.input_word_width = ASRC_WIDTH_16_BIT;
     config.output_word_width = ASRC_WIDTH_16_BIT;
     config.inclk = INCLK_NONE;
@@ -303,8 +303,13 @@ void asrc_pair_convert_s16(asrc_pair *pair, const int16_t *src, unsigned int src
 
     while (src_left > 0)
     {
-        in_len = src_left > pair->buf_size ? pair->buf_size : src_left;
-        out_len = dst_left;
+	if (src_left > pair->buf_size) {
+		in_len = pair->buf_size;
+		out_len = dst_left * in_len/src_left;
+	} else {
+		in_len = src_left;
+		out_len = dst_left;
+	}
 
         buf_info.input_buffer_vaddr = s;
         buf_info.input_buffer_length = in_len;
