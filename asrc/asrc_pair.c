@@ -306,6 +306,7 @@ void asrc_pair_convert_s16(asrc_pair *pair, const int16_t *src, unsigned int src
 	if (src_left > pair->buf_size) {
 		in_len = pair->buf_size;
 		out_len = dst_left * in_len/src_left;
+		out_len = out_len - out_len%(pair->channels*2);
 	} else {
 		in_len = src_left;
 		out_len = dst_left;
