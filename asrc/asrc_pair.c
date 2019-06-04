@@ -18,13 +18,14 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
-
+#include <alsa/asoundlib.h>
 #include <linux/mxc_asrc.h>
 
 #include "asrc_pair.h"
@@ -139,9 +140,8 @@ asrc_pair *asrc_pair_create(unsigned int channels, ssize_t in_period_frames,
     config.dma_buffer_size = dma_buffer_size;
     config.input_sample_rate = in_rate;
     config.output_sample_rate = out_rate;
-    config.buffer_num = buf_num;
-    config.input_word_width = ASRC_WIDTH_16_BIT;
-    config.output_word_width = ASRC_WIDTH_16_BIT;
+    config.input_format = SND_PCM_FORMAT_S16_LE;
+    config.output_format = SND_PCM_FORMAT_S16_LE;
     config.inclk = INCLK_NONE;
     config.outclk = OUTCLK_ASRCK1_CLK;
 
@@ -165,7 +165,6 @@ asrc_pair *asrc_pair_create(unsigned int channels, ssize_t in_period_frames,
     pair->in_period_frames = in_period_frames;
     pair->out_period_frames = out_period_frames;
     pair->buf_size = dma_buffer_size;
-    pair->buf_num = buf_num;
     calculate_num_den(pair);
     
     goto end;
@@ -219,9 +218,8 @@ int asrc_pair_set_rate(asrc_pair *pair, ssize_t in_period_frames,
     config.dma_buffer_size = dma_buffer_size;
     config.input_sample_rate = in_rate;
     config.output_sample_rate = out_rate;
-    config.buffer_num = buf_num;
-    config.input_word_width = ASRC_WIDTH_16_BIT;
-    config.output_word_width = ASRC_WIDTH_16_BIT;
+    config.input_format = SND_PCM_FORMAT_S16_LE;
+    config.output_format = SND_PCM_FORMAT_S16_LE;
     config.inclk = INCLK_NONE;
     config.outclk = OUTCLK_ASRCK1_CLK;
 
