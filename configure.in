@@ -69,6 +69,7 @@ SAVE_PLUGINS_VERSION
 AC_OUTPUT([
 	Makefile
 	asrc/Makefile
+	swpdm/Makefile
 	doc/Makefile
 ])
 

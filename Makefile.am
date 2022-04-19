@@ -1,4 +1,4 @@
-SUBDIRS = asrc doc
+SUBDIRS = asrc swpdm doc
 
 EXTRA_DIST = gitcompile version COPYING.GPL m4/attributes.m4
 AUTOMAKE_OPTIONS = foreign
