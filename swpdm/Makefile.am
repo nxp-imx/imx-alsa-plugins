@@ -1,3 +1,4 @@
+if FSL_USE_SWPDM
 asound_module_pcm_cicFilter_LTLIBRARIES = libasound_module_pcm_cicFilter.la
 
 asound_module_pcm_cicFilterdir = @ALSA_PLUGIN_DIR@
@@ -15,3 +16,4 @@ install-data-hook:
 
 uninstall-hook:
 	rm -f $(DESTDIR)@ALSA_PLUGIN_DIR@/libasound_module_pcm_cicFilter_*.so
+endif
