@@ -216,9 +216,8 @@ static int cic_hw(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params) {
 
 	switch (cic->OSR) {
 	case 48:
-		format = SND_PCM_FORMAT_DSD_U16_LE;
-		refine_rate = rate * 3;
-		cic->in_period_size_refined = cic->in_period_size * 2;
+		format = SND_PCM_FORMAT_DSD_U32_LE;
+		refine_rate = rate * 3 / 2;
 		break;
 	case 64:
 		format = SND_PCM_FORMAT_DSD_U32_LE;
