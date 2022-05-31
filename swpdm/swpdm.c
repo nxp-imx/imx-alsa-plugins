@@ -22,12 +22,12 @@
 #define MAX_IN_BUFFER_SIZE                    8192
 #define MAX_IN_PERIOD_SIZE                    4096
 
-#define MAX_OUT_BUFFER_SIZE                   4096
-#define MAX_OUT_PERIOD_SIZE                   2048
-
-#define CHANNELS                              4
+#define PDM_CHANNELS                          4
 #define FORMAT                                4
-#define FRAMES_TO_BYTES(f)                    ((f) * CHANNELS * FORMAT)
+#define MAX_PCM_CHANNELS                      4
+#define MIN_PCM_CHANNELS                      1
+#define MAX_PERIODS                           8
+#define DIV_BY_8(x)                           ((x) >> 3)
 
 typedef struct snd_pcm_cic_filter {
 	/* internal plug elements */
@@ -43,8 +43,6 @@ typedef struct snd_pcm_cic_filter {
 	unsigned out_samples_per_channel;
 	snd_pcm_uframes_t out_period_size;
 	snd_pcm_uframes_t in_period_size;
-	snd_pcm_uframes_t in_period_size_refined;
-	int periods;
 	/* external plug elements */
 	int inval_iterations;
 	int iterations;
@@ -139,13 +137,20 @@ static snd_pcm_sframes_t cic_pointer(snd_pcm_ioplug_t *io) {
 static snd_pcm_sframes_t cic_transfer(snd_pcm_ioplug_t *io, const snd_pcm_channel_area_t *areas, 
 				      snd_pcm_uframes_t offset, snd_pcm_uframes_t size) {
 	snd_pcm_cic_filter_t *cic = io->private_data;
+	unsigned int *pcm_samples;
+	unsigned int *pdm_samples;
 	snd_pcm_sframes_t slave_frames;
-	unsigned char *src;
+	unsigned int j;
 
-	src = areas->addr + FRAMES_TO_BYTES(offset);
+	/* PCM output */
+	pcm_samples = (unsigned int *)(areas->addr + DIV_BY_8(areas->first));
+	pcm_samples = (void *)pcm_samples + offset * DIV_BY_8(areas->step);
+
+	/* PDM output */
+	pdm_samples = (unsigned int *)cic->afe->outputBuffer;
 
 	/*Read from the slave and saved to the afe input buffer.*/
-	slave_frames = snd_pcm_mmap_readi(cic->slave, cic->afe->inputBuffer, cic->in_period_size_refined);
+	slave_frames = snd_pcm_mmap_readi(cic->slave, cic->afe->inputBuffer, cic->in_period_size);
 	if(slave_frames < 0)
 		return slave_frames;
 	/*pdm2pcm*/
@@ -156,7 +161,27 @@ static snd_pcm_sframes_t cic_transfer(snd_pcm_ioplug_t *io, const snd_pcm_channe
 		size = 0;
 	} else {
 		/*This work but the porcentage table with the -vv parameters doesnt work.*/
-		memcpy(src, cic->afe->outputBuffer, FRAMES_TO_BYTES(cic->out_period_size));
+		if (io->channels == PDM_CHANNELS) {
+			memcpy(pcm_samples, cic->afe->outputBuffer, cic->out_period_size * PDM_CHANNELS * FORMAT);
+		} else if (io->channels == 1) {
+			for(j=0; j < io->period_size; j++) {
+					*pcm_samples++ = *pdm_samples++;
+					pdm_samples = (void *)pdm_samples + 12;
+			}
+		}else if (io->channels == 2) {
+			for(j=0; j < io->period_size; j++) {
+					*pcm_samples++ = *pdm_samples++;
+					*pcm_samples++ = *pdm_samples++;
+					pdm_samples = (void *)pdm_samples + 8;
+			}
+		}else if (io->channels == 3) {
+			for(j=0; j < io->period_size; j++) {
+					*pcm_samples++ = *pdm_samples++;
+					*pcm_samples++ = *pdm_samples++;
+					*pcm_samples++ = *pdm_samples++;
+					pdm_samples = (void *)pdm_samples + 4;
+			}
+		}
 	}
 
 	cic->ptr = cic->ptr + cic->out_period_size;
@@ -176,8 +201,29 @@ static int cic_hw(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params) {
 	snd_pcm_cic_filter_t *cic = io->private_data;
 	snd_pcm_format_t format;
 	unsigned int rate, refine_rate;
+	unsigned int samples_per_channel, periods;
 	int err;
 	int dir;
+
+	/* Filter configuration */
+	/* The Cic Decoder request to divide the samples by 16. */
+	samples_per_channel = io->period_size / 16;
+
+	/* Init the afe object */
+	err = constructAfeCicDecoder(cic->type, cic->afe, cic->gain, samples_per_channel);
+	if (err == false) {
+		SNDERR("Fail to create AfeCicDecoder");
+		return SWPDM_ERR;
+	}
+
+	/* These values are in frame size. */
+	cic->in_period_size = cic->afe->inputBufferSizePerChannel;
+	cic->out_period_size = cic->afe->outputBufferSizePerChannel;
+	if(cic->out_period_size != io->period_size) {
+		SNDERR("Mismatch on AfeCicDecoder output buffer size and User buffer size."
+		" Set a power of two to the --period_size parameter.");
+		return SWPDM_ERR;
+	}
 
 	if(cic->slave_params == NULL) {
 		err = snd_pcm_hw_params_malloc(&cic->slave_params);
@@ -199,7 +245,7 @@ static int cic_hw(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params) {
 	}
 
 	/* set channels */
-	err = snd_pcm_hw_params_set_channels(cic->slave, cic->slave_params, CHANNELS);
+	err = snd_pcm_hw_params_set_channels(cic->slave, cic->slave_params, PDM_CHANNELS);
 	if (err < 0) {
 		SNDERR("Unable to set numbers of channels: %s\n", snd_strerror(err));
 		return err;
@@ -211,8 +257,6 @@ static int cic_hw(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params) {
 		SNDERR("unable to get device rate\n");
 		return err;
 	}
-
-	cic->in_period_size_refined = cic->in_period_size;
 
 	switch (cic->OSR) {
 	case 48:
@@ -259,14 +303,15 @@ static int cic_hw(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params) {
 	}
 
 	/* set the buffer size */
-	err = snd_pcm_hw_params_set_buffer_size(cic->slave, cic->slave_params, cic->in_period_size_refined * cic->periods);
+	snd_pcm_hw_params_get_periods(params, &periods, &dir);
+	err = snd_pcm_hw_params_set_buffer_size(cic->slave, cic->slave_params, cic->in_period_size * periods);
 	if (err < 0) {
 		SNDERR("Unable to set buffer size.\n");
 		return err;
 	}
 
 	/* set period size */
-	err = snd_pcm_hw_params_set_period_size(cic->slave, cic->slave_params, cic->in_period_size_refined, 0);
+	err = snd_pcm_hw_params_set_period_size(cic->slave, cic->slave_params, cic->in_period_size, 0);
 	if (err < 0) {
 		SNDERR("Unable to set period time\n");
 		return err;
@@ -315,7 +360,7 @@ static int cic_sw(snd_pcm_ioplug_t *io, snd_pcm_sw_params_t *params) {
 	}
 
 	/* start the transfer when the buffer has one period to process: */
-	err = snd_pcm_sw_params_set_start_threshold(cic->slave, sparams, cic->in_period_size_refined);
+	err = snd_pcm_sw_params_set_start_threshold(cic->slave, sparams, cic->in_period_size);
 	err = err == 0 ? snd_pcm_sw_params_set_start_threshold(io->pcm, params, cic->in_period_size) : err;
 	if (err < 0) {
 		SNDERR("Unable to set start threshold mode for capture: %s\n", snd_strerror(err));
@@ -323,7 +368,7 @@ static int cic_sw(snd_pcm_ioplug_t *io, snd_pcm_sw_params_t *params) {
 	}
 
 	/* allow the transfer when at least period_size samples can be processed */
-	err = snd_pcm_sw_params_set_avail_min(cic->slave, sparams, cic->in_period_size_refined);
+	err = snd_pcm_sw_params_set_avail_min(cic->slave, sparams, cic->in_period_size);
 	err = err == 0 ? snd_pcm_sw_params_set_avail_min(io->pcm, params, cic->out_period_size) : err;
 	if (err < 0) {
 		SNDERR("Unable to set avail min for capture: %s\n", snd_strerror(err));
@@ -407,18 +452,15 @@ static int constrains(snd_pcm_ioplug_t *io) {
 		SND_PCM_FORMAT_S32_LE
 	};
 
-	static unsigned int channels[] = {
-		CHANNELS
-	};
-
 	static unsigned int rates[] = {
 		8000, 11025, 16000, 22050, 24000,
 		32000, 44100, 48000, 64000, 88200,
 		96000
 	};
 
-	snd_pcm_cic_filter_t *cic = io->private_data;
-	snd_pcm_uframes_t period_size = cic->out_period_size;
+	static unsigned int period_bytes[] = {
+		192, 384, 768, 1536
+	};
 
 	err = snd_pcm_ioplug_set_param_list(io, SND_PCM_IOPLUG_HW_ACCESS, ARRAY_SIZE(accesses), accesses);
 	if (err < 0) {
@@ -432,7 +474,7 @@ static int constrains(snd_pcm_ioplug_t *io) {
 		return err;
 	}
 
-	err = snd_pcm_ioplug_set_param_list(io, SND_PCM_IOPLUG_HW_CHANNELS, ARRAY_SIZE(channels), channels);
+	err = snd_pcm_ioplug_set_param_minmax(io, SND_PCM_IOPLUG_HW_CHANNELS, MIN_PCM_CHANNELS, MAX_PCM_CHANNELS);
 	if (err < 0) {
 		SNDERR("ioplug cannot set hw channels");
 		return err;
@@ -444,28 +486,13 @@ static int constrains(snd_pcm_ioplug_t *io) {
 		return err;
 	}
 
-	if (period_size > MAX_OUT_PERIOD_SIZE)
-		return -1;
-
-	int remainder = MAX_OUT_BUFFER_SIZE % period_size;
-	int max_buf = (MAX_OUT_BUFFER_SIZE - remainder);
-	cic->periods = max_buf / period_size;
-
-	err = snd_pcm_ioplug_set_param_minmax(io, SND_PCM_IOPLUG_HW_BUFFER_BYTES,
-					      2 * FRAMES_TO_BYTES(period_size), FRAMES_TO_BYTES(max_buf));
-	if (err < 0) {
-		SNDERR("ioplug cannot set hw buffer bytes");
-		return err;
-	}
-
-	err = snd_pcm_ioplug_set_param_minmax(io, SND_PCM_IOPLUG_HW_PERIOD_BYTES,
-					      FRAMES_TO_BYTES(period_size), FRAMES_TO_BYTES(period_size));
+	err = snd_pcm_ioplug_set_param_list(io, SND_PCM_IOPLUG_HW_PERIOD_BYTES, ARRAY_SIZE(period_bytes), period_bytes);
 	if (err < 0) {
 		SNDERR("ioplug cannot set hw period bytes");
 		return err;
 	}
 
-	err = snd_pcm_ioplug_set_param_minmax(io, SND_PCM_IOPLUG_HW_PERIODS, 2, cic->periods);
+	err = snd_pcm_ioplug_set_param_minmax(io, SND_PCM_IOPLUG_HW_PERIODS, 2, MAX_PERIODS);
 	if (err < 0) {
 		SNDERR("ioplug cannot set periods");
 		return err;
@@ -551,22 +578,6 @@ static inline int parse_struct(snd_config_t **conf, const char **str, snd_pcm_ci
 			continue;
 		}
 
-		if(strcmp(id, "frames") == 0) {
-			if(snd_config_get_integer(n, &val) < 0) {
-				SNDERR("'frames' must be a int");
-				err = -EINVAL;
-				break;
-			}
-			if(val > 0 && (val <= 64)) {
-				cic->out_samples_per_channel = (unsigned int)val;
-			} else {
-				SNDERR("'frames' must be in range of: (0, 64]. Default set to 16.");
-				err = -EINVAL;
-				break;
-			}
-			continue;
-		}
-
 		if(strcmp(id, "gain") == 0) {
 			if(snd_config_get_integer(n, &val) < 0) {
 				SNDERR("'gain' must be a int");
@@ -619,25 +630,12 @@ SND_PCM_PLUGIN_DEFINE_FUNC(PLUG_NAME) {
 	cic->type = CIC_pdmToPcmType_cic_order_5_cic_downsample_16;
 	cic->OSR = 64;
 	cic->gain = 0.0f;
-	/*To get 512 frames this is the value. Possible formula inputBuffSiPerChannel = 'this var' * 32*/
-	cic->out_samples_per_channel = 16;
 
 	err = parse_struct(&conf, &devname, cic);
 	if(err != 0){
 		destroy(&cic);
 		return err;
 	}
-
-	/*Init the afe object after "getting" the arguments for the constructure */
-	err = constructAfeCicDecoder(cic->type, cic->afe, cic->gain, cic->out_samples_per_channel);
-	if (err == false) {
-		SNDERR("Fail to create AfeCicDecoder");
-		return SWPDM_ERR;
-	}
-
-	/* These values are in frame size. */
-	cic->in_period_size = cic->afe->inputBufferSizePerChannel;
-	cic->out_period_size = cic->afe->outputBufferSizePerChannel;
 
 	err = snd_pcm_open(&cic->slave, devname, stream, mode);
 	if(err < 0) {
