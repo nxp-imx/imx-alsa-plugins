@@ -38,5 +38,5 @@ rate\osr
 44100	N/A	Support	N/A	N/A	N/A
 48000	N/A	Support	N/A	N/A	N/A
 64000	Support	N/A	N/A	N/A	N/A
-88200	N/A	Support	N/A	N/A	N/A
-96000	N/A	Support	N/A	N/A	N/A
+88200	N/A	N/A	N/A	N/A	N/A
+96000	N/A	N/A	N/A	N/A	N/A
