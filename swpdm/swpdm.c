@@ -209,6 +209,9 @@ static int cic_hw(snd_pcm_ioplug_t *io, snd_pcm_hw_params_t *params) {
 	/* The Cic Decoder request to divide the samples by 16. */
 	samples_per_channel = io->period_size / 16;
 
+	/* refine the gain 1 ~ 101.0 */
+	cic->gain = (1 + cic->gain) * (double)(1 << 30) / pow(cic->OSR/4, 5);
+
 	/* Init the afe object */
 	err = constructAfeCicDecoder(cic->type, cic->afe, cic->gain, samples_per_channel);
 	if (err == false) {
