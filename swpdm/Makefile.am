@@ -7,7 +7,7 @@ AM_CFLAGS = -Wall -g @ALSA_CFLAGS@ $(ASRC_CFLAGS)
 AM_LDFLAGS = -module -avoid-version -export-dynamic -no-undefined $(LDFLAGS_NOUNDEFINED)
 
 libasound_module_pcm_cicFilter_la_SOURCES = swpdm.c
-libasound_module_pcm_cicFilter_la_LIBADD = @ALSA_LIBS@ -limxswpdm -lstdc++
+libasound_module_pcm_cicFilter_la_LIBADD = @ALSA_LIBS@ -lm -limxswpdm -lstdc++
 
 install-data-hook:
 	mkdir -p $(DESTDIR)@ALSA_PLUGIN_DIR@
