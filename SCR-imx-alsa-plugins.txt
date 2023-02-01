@@ -1,0 +1,9 @@
+Package:                     imx-alsa-plugins.git
+Version:
+Outgoing License:            GPL-2.0
+License File:                LICENSE
+Type of Content:             source
+Description and comments:    Plugins for various audio libraries and sound servers
+Release Location:            https://github.com/nxp-imx/imx-alsa-plugins
+Origin:                      NXP (GPL-2.0)
+                             Alsa Plugins (GPL-2.0+) - ftp://ftp.alsa-project.org/pub/plugins/
