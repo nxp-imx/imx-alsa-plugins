@@ -25,7 +25,7 @@
 #define ASRC_PAIR_H
 
 #include <stdint.h>
-#include <linux/mxc_asrc.h>
+#include <imx/linux/mxc_asrc.h>
 
 #ifdef __cplusplus
 extern "C" {

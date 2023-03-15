@@ -26,7 +26,7 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <alsa/asoundlib.h>
-#include <linux/mxc_asrc.h>
+#include <imx/linux/mxc_asrc.h>
 
 #include "asrc_pair.h"
 
